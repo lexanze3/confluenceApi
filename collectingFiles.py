@@ -5,19 +5,48 @@ from win32com.client import constants
 from atlassian import Confluence
 import win32com.client as win32
 from docx import Document
+from urllib.parse import urlparse
 import os
 import re
+import sys
+import shutil
 
-#ваша ссылка
-url_full='https://сonfluence.ru/'
+#создать директорию files, для временных файлов
+path = os.path.join(os.getcwd(), "files")
+shutil.rmtree(path,ignore_errors=True)
+os.makedirs(path, exist_ok=True)
+    
+#параметры
+username=sys.argv[1]
+password=sys.argv[2]
+space=sys.argv[3]
+url_full=sys.argv[4]
+parsed_url=urlparse(url_full)
+url="{0}://{1}".format(parsed_url.scheme, parsed_url.netloc)
 
-confluence = Confluence(
-    url='https://сonfluence.ru/',
-    #логин
-    username='********',
-    #пароль
-    password='******')
+#глобальные переменные
+confluence = Confluence(url=url,username=username,password=password)
+id_position = dict();
 
+def get_all_pages(confluence, space):
+    start = 0
+    limit = 100
+    _all_pages = []
+    while True:
+        pages = confluence.get_all_pages_from_space(space, start, limit, status=None, expand=None, content_type='page')
+        _all_pages = _all_pages + pages
+        if len(pages) < limit:
+            break
+        start = start + limit
+    return _all_pages
+
+def get_id_pos():
+    id_position = dict()
+    pages = get_all_pages(confluence, space)
+    for page in pages:
+        id_position[page['id']] = page['extensions']['position'] if page['extensions']['position'] != 'none' else page['title'] 
+    return id_position
+    
 def get_id(url_full):
     return url_full.split('=')[-1]
 
@@ -39,7 +68,7 @@ def cursor(list_child,level=0):
             response = confluence.get_page_as_word(page['id'])
             contents.append(response)
 
-def start_parser(url,url_full):
+def start_parser(url_full):
     #Получили ID родителя
     id_url = get_id(url_full)
     print(id_url)
@@ -61,16 +90,10 @@ def save_files(contents):
     return paths
 
 def sort_json(json_list):
-    titles = list()
-    for i in json_list:
-        titles.append(i['title'])
-    titles.sort()
-    sort_json = list()
-    for i in titles:
-        for j in json_list:
-            if i==j['title']:
-                sort_json.append(j)
-    return sort_json
+    for json in json_list:
+        json['position'] = id_position[json['content']['id']]
+    json_list.sort(key=lambda x: x['position'])
+    return json_list
 
 def convert_doc_to_docx(files):
     paths=list()
@@ -102,8 +125,10 @@ def composer(files):
     print('load "{0}" complite'.format(global_title))
     
 contents = list()
+#загрузить позицию страниц в дереве переходов
+id_position = get_id_pos()
 #начало работы по сбору страниц
-global_title = start_parser(url,url_full)
+global_title = start_parser(url_full)
 #загрузка страниц в doc файлы
 all_paths = save_files(contents)
 #преобразование их в .docx
